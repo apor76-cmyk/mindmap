@@ -275,6 +275,7 @@ svg{width:100%;height:100%;display:block;}
     </div>
     <div class="modal-actions">
       <button class="btn-danger" id="em-del-btn" onclick="deleteCurrentNode()">🗑 삭제</button>
+      <button id="em-star-btn" onclick="toggleStar()" style="background:var(--bg-glass);border:1px solid var(--border-bright);">☆ 별표</button>
       <button onclick="closeEditModal()">취소</button>
       <button class="btn-primary" onclick="saveEditModal()">✔ 저장</button>
     </div>
@@ -634,6 +635,7 @@ let selectedKeys = new Set();
 let startPan = {x:0,y:0};
 let nodeStartPositions = {};
 let editingKey = null;
+let starredKeys = new Set();
 let catOrder = [];
 let githubToken = localStorage.getItem('github_token') || '';
 const SNAP = 20;
@@ -727,6 +729,7 @@ function saveToStorage() {
     CATEGORIES[currentCategory].positions = JSON.parse(JSON.stringify(positions));
     CATEGORIES[currentCategory].data = JSON.parse(JSON.stringify(DATA));
     CATEGORIES[currentCategory].parentMap = JSON.parse(JSON.stringify(parentMap));
+    CATEGORIES[currentCategory].starred = [...starredKeys];
   }
   localStorage.setItem('categories_v7', JSON.stringify(CATEGORIES));
   localStorage.setItem('cat_order_v7', JSON.stringify(catOrder));
@@ -739,6 +742,7 @@ function loadCategoryIntoState(catKey) {
   positions = JSON.parse(JSON.stringify(cat.positions || {}));
   DATA = JSON.parse(JSON.stringify(cat.data || {}));
   parentMap = JSON.parse(JSON.stringify(cat.parentMap || {}));
+  starredKeys = new Set(cat.starred || []);
   selectedKeys.clear();
   editMode = false;
   document.getElementById('edit-btn').classList.remove('active');
@@ -1202,6 +1206,21 @@ function render() {
     hint.textContent='클릭=수정';
     g.appendChild(hint);
 
+    // 별표 표시
+    if (starredKeys.has(key)) {
+      const star = document.createElementNS('http://www.w3.org/2000/svg','text');
+      star.setAttribute('x', w/2-4);
+      star.setAttribute('y', -h/2+2);
+      star.setAttribute('text-anchor','end');
+      star.setAttribute('dominant-baseline','hanging');
+      star.setAttribute('font-size', isLeaf?'13':'15');
+      star.setAttribute('fill','#ff9500');
+      star.setAttribute('pointer-events','none');
+      star.setAttribute('filter','drop-shadow(0 0 4px rgba(255,149,0,0.8))');
+      star.textContent='★';
+      g.appendChild(star);
+    }
+
     // +/- 버튼
     g.appendChild(makeActionBtn(w/2,-h/2,'＋','#26a69a',key,'add'));
     if (!isRoot) g.appendChild(makeActionBtn(-w/2,-h/2,'－','#ef5350',key,'del'));
@@ -1435,6 +1454,12 @@ function openEditModal(key) {
   (d.items||[]).forEach(it=>appendItemRow(container,it));
   document.getElementById('em-del-btn').style.display=key==='root'?'none':'inline-block';
   document.getElementById('em-heading').textContent='노드 편집';
+  const isStarred = starredKeys.has(key);
+  const starBtn = document.getElementById('em-star-btn');
+  starBtn.textContent = isStarred ? '★ 별표 제거' : '☆ 별표 추가';
+  starBtn.style.background = isStarred ? 'rgba(255,149,0,0.18)' : 'var(--bg-glass)';
+  starBtn.style.borderColor = isStarred ? '#ff9500' : 'var(--border-bright)';
+  starBtn.style.color = isStarred ? '#ff9500' : 'var(--text-main)';
   document.getElementById('edit-node-modal').classList.add('open');
   setTimeout(()=>{
     const f=document.getElementById('em-title');
@@ -1466,6 +1491,26 @@ function addEditItem() {
   appendItemRow(document.getElementById('em-items'),'');
   const rows=document.querySelectorAll('#em-items .edit-item-row input');
   if (rows.length>0) rows[rows.length-1].focus();
+}
+
+function toggleStar() {
+  if (!editingKey) return;
+  const starBtn = document.getElementById('em-star-btn');
+  if (starredKeys.has(editingKey)) {
+    starredKeys.delete(editingKey);
+    starBtn.textContent = '☆ 별표 추가';
+    starBtn.style.background = 'var(--bg-glass)';
+    starBtn.style.borderColor = 'var(--border-bright)';
+    starBtn.style.color = 'var(--text-main)';
+  } else {
+    starredKeys.add(editingKey);
+    starBtn.textContent = '★ 별표 제거';
+    starBtn.style.background = 'rgba(255,149,0,0.18)';
+    starBtn.style.borderColor = '#ff9500';
+    starBtn.style.color = '#ff9500';
+  }
+  saveToStorage();
+  render();
 }
 
 function closeEditModal() {
@@ -1529,7 +1574,7 @@ function deleteNodeByKey(key) {
   const desc=collectDescendants(key);
   const msg=desc.length>0?`"${title}" 노드를 삭제할까요?\n자식 노드 ${desc.length}개도 함께 제거됩니다.`:`"${title}" 노드를 삭제할까요?`;
   if (!confirm(msg)) return;
-  [key,...desc].forEach(k=>{delete DATA[k];delete positions[k];delete parentMap[k];selectedKeys.delete(k);});
+  [key,...desc].forEach(k=>{delete DATA[k];delete positions[k];delete parentMap[k];selectedKeys.delete(k);starredKeys.delete(k);});
   saveToStorage(); updateSelectionUI(); render();
 }
 
