@@ -253,8 +253,8 @@ svg{width:100%;height:100%;display:block;}
       <input id="em-key" type="text" disabled style="opacity:0.45">
     </div>
     <div class="modal-field">
-      <label>제목 (줄바꿈: \n 입력)</label>
-      <input id="em-title" type="text" placeholder="노드 제목">
+      <label>제목 (줄바꿈: Ctrl+L)</label>
+      <textarea id="em-title" rows="2" placeholder="노드 제목" style="resize:vertical;min-height:40px;"></textarea>
     </div>
     <div class="modal-field">
       <label>출처 / 부제</label>
@@ -416,7 +416,7 @@ svg{width:100%;height:100%;display:block;}
         • <code>name</code>: 카테고리 이름 (필수)<br>
         • <code>root</code>: 반드시 포함, parent 없음 (필수)<br>
         • <code>parent</code>: 부모 노드 key, 루트 제외 필수<br>
-        • <code>title</code>: 노드 이름 (필수, 줄바꿈: \n)<br>
+        • <code>title</code>: 노드 이름 (필수, 줄바꿈: Ctrl+L)<br>
         • <code>items</code>: 내용 목록 배열 (선택)<br>
         • <code>quote</code>: 인용구 문자열 (선택)<br>
         • <code>color</code>: hex 색상, 1~2단계 노드 권장
@@ -1426,7 +1426,7 @@ function openEditModal(key) {
   const d=DATA[key]||{};
   editingKey=key;
   document.getElementById('em-key').value=key;
-  document.getElementById('em-title').value=(d.title||'').replace(/\n/g,'\\n');
+  document.getElementById('em-title').value=(d.title||'');
   document.getElementById('em-source').value=d.source||d.sub||'';
   document.getElementById('em-quote').value=d.quote||'';
   document.getElementById('em-color').value=d.color||'';
@@ -1436,7 +1436,18 @@ function openEditModal(key) {
   document.getElementById('em-del-btn').style.display=key==='root'?'none':'inline-block';
   document.getElementById('em-heading').textContent='노드 편집';
   document.getElementById('edit-node-modal').classList.add('open');
-  setTimeout(()=>{const f=document.getElementById('em-title');f.focus();f.select();},60);
+  setTimeout(()=>{
+    const f=document.getElementById('em-title');
+    f.focus();f.select();
+    f.onkeydown=function(e){
+      if(e.ctrlKey && e.key==='l'){
+        e.preventDefault();
+        const s=f.selectionStart, v=f.value;
+        f.value=v.slice(0,s)+'\n'+v.slice(f.selectionEnd);
+        f.selectionStart=f.selectionEnd=s+1;
+      }
+    };
+  },60);
 }
 
 function appendItemRow(container, value) {
@@ -1468,7 +1479,7 @@ function saveEditModal() {
   const d=DATA[editingKey];
   const titleRaw=document.getElementById('em-title').value.trim();
   if (!titleRaw) { alert('제목을 입력해주세요'); return; }
-  d.title=titleRaw.replace(/\\n/g,'\n');
+  d.title=titleRaw;
   const src=document.getElementById('em-source').value.trim();
   d.source=src; d.sub=src;
   d.quote=document.getElementById('em-quote').value.trim();
