@@ -285,6 +285,24 @@ svg{width:100%;height:100%;display:block;}
   </div>
 </div>
 
+<!-- JSON 불러오기 확인 모달 -->
+<div id="json-import-modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:440px;">
+    <span class="modal-close" onclick="closeJsonImportModal()">✕</span>
+    <h2>📂 JSON 불러오기</h2>
+    <p id="json-import-desc" style="font-size:13px;color:var(--text-sub);margin:12px 0 20px;line-height:1.7;"></p>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn-primary" onclick="applyJsonImport(false)" style="width:100%;padding:12px;font-size:13px;">
+        🔄 전체 교체 <span style="font-size:11px;opacity:0.75;display:block;margin-top:3px;">현재 데이터를 지우고 파일 내용으로 완전히 교체</span>
+      </button>
+      <button onclick="applyJsonImport(true)" style="width:100%;padding:12px;font-size:13px;background:var(--bg-glass);border:1px solid var(--border-bright);">
+        ➕ 병합 추가 <span style="font-size:11px;opacity:0.75;display:block;margin-top:3px;">기존 데이터를 유지하고 파일의 카테고리를 추가</span>
+      </button>
+      <button onclick="closeJsonImportModal()" style="width:100%;padding:10px;font-size:12px;background:var(--bg-glass);border:1px solid var(--border);">취소</button>
+    </div>
+  </div>
+</div>
+
 <!-- 카테고리 추가 모달 -->
 <div id="add-category-modal" class="modal-overlay">
   <div class="modal-box" style="max-width:480px;">
@@ -2081,6 +2099,8 @@ function exportToJson() {
   showStatus('✅ JSON 파일로 저장되었습니다');
 }
 
+let _pendingImportData = null;
+
 function handleJsonFileLoad(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -2088,37 +2108,54 @@ function handleJsonFileLoad(event) {
   reader.onload = e => {
     try {
       const parsed = JSON.parse(e.target.result);
-      // 최소 유효성 검사: 객체이고 각 카테고리에 data가 있어야 함
       if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('올바른 형식이 아닙니다');
       const keys = Object.keys(parsed);
       if (keys.length === 0) throw new Error('카테고리가 없습니다');
       keys.forEach(k => {
         if (!parsed[k].data) throw new Error(`"${k}" 카테고리에 data가 없습니다`);
       });
-      const mode = confirm(
-        `📂 "${file.name}"\n\n` +
-        `카테고리 ${keys.length}개가 포함되어 있습니다.\n\n` +
-        `[확인] 현재 데이터에 병합\n[취소] 현재 데이터를 덮어쓰기`
-      );
-      if (mode) {
-        // 병합: 기존 데이터 유지하고 추가
-        Object.assign(CATEGORIES, parsed);
-        keys.forEach(k => { if (!catOrder.includes(k)) catOrder.push(k); });
-      } else {
-        // 덮어쓰기
-        CATEGORIES = parsed;
-        catOrder = keys;
-      }
-      saveToStorage();
-      updateCategorySelector();
-      const firstKey = catOrder[0];
-      if (firstKey) { loadCategoryIntoState(firstKey); reCenter(); render(); }
-      showStatus(`✅ JSON 불러오기 완료 (${keys.length}개 카테고리)`);
+      // 파싱 성공 → 모달로 선택지 제시
+      _pendingImportData = {parsed, keys, filename: file.name};
+      document.getElementById('json-import-desc').textContent =
+        `"${file.name}"\n카테고리 ${keys.length}개 포함: ${keys.map(k=>parsed[k].name||k).join(', ')}`;
+      document.getElementById('json-import-modal').classList.add('open');
     } catch(err) {
       showStatus('❌ JSON 오류: ' + err.message, true);
     }
   };
   reader.readAsText(file);
+}
+
+function closeJsonImportModal() {
+  document.getElementById('json-import-modal').classList.remove('open');
+  _pendingImportData = null;
+}
+
+function applyJsonImport(merge) {
+  if (!_pendingImportData) return;
+  const {parsed, keys} = _pendingImportData;
+  closeJsonImportModal();
+
+  // ★ 핵심 수정: currentCategory를 먼저 null로 만들어
+  //   saveToStorage()가 구 메모리 데이터로 새 데이터를 오염시키는 것을 방지
+  currentCategory = null;
+
+  if (merge) {
+    Object.assign(CATEGORIES, parsed);
+    keys.forEach(k => { if (!catOrder.includes(k)) catOrder.push(k); });
+  } else {
+    CATEGORIES = parsed;
+    catOrder = keys;
+  }
+
+  // ★ 핵심 수정: loadCategoryIntoState를 먼저 → 메모리를 새 데이터로 갱신
+  //   그 다음 saveToStorage → 올바른 데이터가 localStorage에 기록됨
+  const firstKey = catOrder[0];
+  if (firstKey) loadCategoryIntoState(firstKey);
+  saveToStorage();
+  updateCategorySelector();
+  if (firstKey) { reCenter(); render(); }
+  showStatus(`✅ JSON 불러오기 완료 (${keys.length}개 카테고리)`);
 }
 
 /* ============================================================
