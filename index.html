@@ -207,9 +207,12 @@ svg{width:100%;height:100%;display:block;}
     <button class="qm-btn" id="qm-edit-btn" onclick="quickAction('edit')"><span class="qm-icon">🖊</span>편집 모드</button>
     <button class="qm-btn" id="qm-clear-btn" onclick="quickAction('clear')" style="display:none;"><span class="qm-icon">✖</span>선택 해제</button>
     <button class="qm-btn" onclick="quickAction('ai')"><span class="qm-icon">🤖</span>AI 맵 업로드</button>
+    <button class="qm-btn" onclick="quickAction('exportJson')"><span class="qm-icon">💾</span>JSON 저장</button>
+    <button class="qm-btn" onclick="quickAction('importJson')"><span class="qm-icon">📂</span>JSON 불러오기</button>
     <button class="qm-btn" onclick="quickAction('github')"><span class="qm-icon">☁️</span>GitHub 설정</button>
-    <button class="qm-btn" onclick="quickAction('save')"><span class="qm-icon">💾</span>GitHub 저장</button>
-    <button class="qm-btn" onclick="quickAction('load')"><span class="qm-icon">📥</span>GitHub 로드</button>
+    <button class="qm-btn" onclick="quickAction('save')"><span class="qm-icon">⬆️</span>GitHub 저장</button>
+    <button class="qm-btn" onclick="quickAction('load')"><span class="qm-icon">⬇️</span>GitHub 로드</button>
+    <input type="file" id="json-file-input" accept=".json" style="display:none" onchange="handleJsonFileLoad(event)">
     <button class="qm-btn" onclick="quickAction('center')"><span class="qm-icon">🎯</span>중앙으로</button>
     <button class="qm-btn" id="qm-reset-btn" onclick="quickAction('reset')"><span class="qm-icon">🔄</span><span id="qm-reset-label">초기화</span></button>
     <button class="qm-btn" onclick="quickAction('theme')"><span class="qm-icon">🌓</span>테마 전환</button>
@@ -2021,6 +2024,13 @@ function quickAction(action) {
     case 'ai':
       openAiUploadModal();
       break;
+    case 'exportJson':
+      exportToJson();
+      break;
+    case 'importJson':
+      document.getElementById('json-file-input').value='';
+      document.getElementById('json-file-input').click();
+      break;
     case 'github':
       openGithubModal();
       break;
@@ -2046,6 +2056,69 @@ function quickAction(action) {
       openBgColorModal();
       break;
   }
+}
+
+/* ============================================================
+   로컬 JSON 저장 / 불러오기
+   ============================================================ */
+function exportToJson() {
+  saveToStorage(); // 현재 작업 내용 먼저 반영
+  const json = JSON.stringify(CATEGORIES, null, 2);
+  const blob = new Blob([json], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const now = new Date();
+  const ts = now.getFullYear()
+    + String(now.getMonth()+1).padStart(2,'0')
+    + String(now.getDate()).padStart(2,'0')
+    + '_'
+    + String(now.getHours()).padStart(2,'0')
+    + String(now.getMinutes()).padStart(2,'0');
+  a.href = url;
+  a.download = `mastery_backup_${ts}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showStatus('✅ JSON 파일로 저장되었습니다');
+}
+
+function handleJsonFileLoad(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      // 최소 유효성 검사: 객체이고 각 카테고리에 data가 있어야 함
+      if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('올바른 형식이 아닙니다');
+      const keys = Object.keys(parsed);
+      if (keys.length === 0) throw new Error('카테고리가 없습니다');
+      keys.forEach(k => {
+        if (!parsed[k].data) throw new Error(`"${k}" 카테고리에 data가 없습니다`);
+      });
+      const mode = confirm(
+        `📂 "${file.name}"\n\n` +
+        `카테고리 ${keys.length}개가 포함되어 있습니다.\n\n` +
+        `[확인] 현재 데이터에 병합\n[취소] 현재 데이터를 덮어쓰기`
+      );
+      if (mode) {
+        // 병합: 기존 데이터 유지하고 추가
+        Object.assign(CATEGORIES, parsed);
+        keys.forEach(k => { if (!catOrder.includes(k)) catOrder.push(k); });
+      } else {
+        // 덮어쓰기
+        CATEGORIES = parsed;
+        catOrder = keys;
+      }
+      saveToStorage();
+      updateCategorySelector();
+      const firstKey = catOrder[0];
+      if (firstKey) { loadCategoryIntoState(firstKey); reCenter(); render(); }
+      showStatus(`✅ JSON 불러오기 완료 (${keys.length}개 카테고리)`);
+    } catch(err) {
+      showStatus('❌ JSON 오류: ' + err.message, true);
+    }
+  };
+  reader.readAsText(file);
 }
 
 /* ============================================================
