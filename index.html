@@ -1888,6 +1888,22 @@ function clearGithubToken() {
   showStatus('✅ 토큰 삭제됨');
 }
 
+/* UTF-8 안전 Base64 인코딩/디코딩 유틸 */
+function _toB64(str) {
+  // TextEncoder → Uint8Array → Base64 (대용량도 안전한 청크 방식)
+  const bytes = new TextEncoder().encode(str);
+  let bin = '', CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK)
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  return btoa(bin);
+}
+function _fromB64(b64) {
+  // Base64 → Uint8Array → TextDecoder (UTF-8 완전 복원)
+  const bin   = atob(b64.replace(/\n/g, ''));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
 async function saveToGithub() {
   if(!githubToken){showStatus('먼저 GitHub 토큰을 설정해주세요',true);openGithubModal();return;}
   saveToStorage();
@@ -1895,12 +1911,19 @@ async function saveToGithub() {
     showStatus('📤 GitHub에 저장 중...');
     let sha;
     try {
-      const gr=await fetch('https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json',{headers:{'Authorization':`token ${githubToken}`}});
+      const gr=await fetch('https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json',
+        {headers:{'Authorization':`token ${githubToken}`}});
       if(gr.ok){const gd=await gr.json();sha=gd.sha;}
     }catch(e){}
-    const body={message:`Auto-save: ${new Date().toISOString()}`,content:btoa(unescape(encodeURIComponent(JSON.stringify(CATEGORIES,null,2)))),committer:{name:'Mastery System',email:'mastery@system.com'}};
+    const body={
+      message:`Auto-save: ${new Date().toISOString()}`,
+      content: _toB64(JSON.stringify(CATEGORIES,null,2)),
+      committer:{name:'Mastery System',email:'mastery@system.com'}
+    };
     if(sha)body.sha=sha;
-    const res=await fetch('https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json',{method:'PUT',headers:{'Authorization':`token ${githubToken}`,'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const res=await fetch('https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json',
+      {method:'PUT',headers:{'Authorization':`token ${githubToken}`,'Content-Type':'application/json'},
+       body:JSON.stringify(body)});
     if(res.ok)showStatus('✅ GitHub 저장 완료!');
     else{const err=await res.json();showStatus('❌ 저장 실패: '+err.message,true);}
   }catch(e){showStatus('❌ 오류: '+e.message,true);}
@@ -1910,14 +1933,26 @@ async function loadFromGithub() {
   if(!githubToken){showStatus('먼저 GitHub 토큰을 설정해주세요',true);openGithubModal();return;}
   try {
     showStatus('📥 GitHub에서 로드 중...');
-    const res=await fetch('https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json',{headers:{'Authorization':`token ${githubToken}`}});
+    const res=await fetch('https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json',
+      {headers:{'Authorization':`token ${githubToken}`}});
     if(res.ok){
       const d=await res.json();
-      CATEGORIES=JSON.parse(decodeURIComponent(escape(atob(d.content.replace(/\n/g,'')))));
+      const parsed=JSON.parse(_fromB64(d.content));
+
+      // ★ 핵심 수정 1: currentCategory를 null로 → saveToStorage가 구 메모리 데이터로
+      //   새 CATEGORIES를 오염시키는 것을 방지
+      currentCategory=null;
+      CATEGORIES=parsed;
+
+      // ★ 핵심 수정 2: catOrder를 로드 데이터 기준으로 재설정
+      catOrder=Object.keys(CATEGORIES);
+
+      // ★ 핵심 수정 3: loadCategoryIntoState로 메모리 갱신 → 그 다음 saveToStorage
+      const firstKey=catOrder[0];
+      if(firstKey) loadCategoryIntoState(firstKey);
       saveToStorage();
       updateCategorySelector();
-      const firstKey=Object.keys(CATEGORIES)[0];
-      if(firstKey)switchCategory(firstKey);
+      if(firstKey){reCenter();render();}
       showStatus('✅ GitHub 로드 완료!');
     }else if(res.status===404){showStatus('저장된 데이터가 없습니다. 먼저 저장해주세요.',true);}
     else showStatus('❌ 로드 실패',true);
