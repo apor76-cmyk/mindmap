@@ -22,7 +22,7 @@
   --select-glow:rgba(61,90,254,0.6);
 }
 body{font-family:'DM Sans','Pretendard',sans-serif;background:var(--bg-page);color:var(--text-main);overflow:hidden;height:100vh;height:100dvh;}
-#canvas-wrapper{width:100vw;height:100vh;height:100dvh;cursor:grab;background:transparent;position:relative;z-index:1;touch-action:none;}body::before{content:'';position:fixed;inset:0;background:
+body::before{content:'';position:fixed;inset:0;background:
   radial-gradient(ellipse 70% 50% at 15% 25%,rgba(50,60,160,0.22) 0%,transparent 55%),
   radial-gradient(ellipse 55% 45% at 85% 75%,rgba(130,40,170,0.16) 0%,transparent 50%),
   radial-gradient(ellipse 90% 80% at 50% 50%,rgba(5,8,25,0.95) 0%,transparent 100%);
@@ -62,13 +62,9 @@ button.active{background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 
 .category-selector option{background:#0d1025;color:#e8eaf6;}
 
 /* 캔버스 */
-svg{width:100%;height:100%;display:block;touch-action:none;}
+#canvas-wrapper{width:100vw;height:100vh;height:100dvh;cursor:grab;background:transparent;position:fixed;top:0;left:0;z-index:1;touch-action:none;}
 #canvas-wrapper:active{cursor:grabbing;}
-/* 모바일 안전 영역 및 동적 뷰포트 대응 */
-@supports not (height: 100dvh) {
-  body, #canvas-wrapper { height: -webkit-fill-available; }
-}
-
+svg{width:100%;height:100%;display:block;touch-action:none;}
 #grid-pattern{display:none;}
 .edit-mode #grid-pattern{display:block;}
 
@@ -1253,8 +1249,8 @@ function render() {
     // 이벤트
     g.onmousedown = e => {
       if (!editMode) return;
+      if (e.target.closest('.node-action')) return; // +/- 버튼은 무시
       e.stopPropagation();
-      if (e.target.closest('.node-action')) return;
       mouseDownInfo = {key, x:e.clientX, y:e.clientY, moved:false};
       if (e.shiftKey||e.ctrlKey) {
         selectedKeys.has(key) ? selectedKeys.delete(key) : selectedKeys.add(key);
@@ -1271,9 +1267,9 @@ function render() {
     };
 
     g.onclick = e => {
+      if (e.target.closest('.node-action')) return; // +/- 버튼 클릭은 노드 편집 안 함
       if (mouseDownInfo&&mouseDownInfo.moved) { mouseDownInfo=null; return; }
       mouseDownInfo=null;
-      if (e.target.closest('.node-action')) return;
       if (editMode) { openEditModal(key); return; }
       showPopup(key);
     };
@@ -1298,8 +1294,25 @@ function makeActionBtn(cx,cy,symbol,color,nodeKey,action) {
   t.setAttribute('class','action-btn-symbol'); t.setAttribute('pointer-events','none');
   t.textContent = symbol;
   btn.appendChild(t);
-  btn.addEventListener('click', e => { e.stopPropagation(); action==='add'?addChildNode(nodeKey):deleteNodeByKey(nodeKey); });
-  btn.addEventListener('mousedown', e => e.stopPropagation());
+
+  // PC: click
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    e.preventDefault();
+    action==='add' ? addChildNode(nodeKey) : deleteNodeByKey(nodeKey);
+  });
+  btn.addEventListener('mousedown', e => { e.stopPropagation(); e.preventDefault(); });
+  btn.addEventListener('mouseup',   e => { e.stopPropagation(); });
+
+  // 모바일: touchstart → 즉시 실행 (touchend에서 탭 판정 전에 처리)
+  btn.addEventListener('touchstart', e => {
+    e.stopPropagation();
+    e.preventDefault();
+    action==='add' ? addChildNode(nodeKey) : deleteNodeByKey(nodeKey);
+  }, {passive: false});
+  btn.addEventListener('touchend', e => { e.stopPropagation(); e.preventDefault(); }, {passive: false});
+  btn.addEventListener('touchmove', e => { e.stopPropagation(); }, {passive: false});
+
   return btn;
 }
 
@@ -1360,29 +1373,54 @@ window.addEventListener('mouseup', () => {
 });
 
 /* ============================================================
-   터치 인터랙션 (모바일: 1손가락 이동, 2손가락 핀치줌, 탭)
+   터치 인터랙션 (모바일: 1손가락 이동/탭, 2손가락 핀치줌)
    ============================================================ */
-let _touchPanStart   = null;   // {ox, oy}
-let _touchTapStart   = null;   // {x, y, time, moved}
+let _touchPanStart   = null;
+let _touchTapStart   = null;
 let _touchPinchDist  = 0;
 let _touchPinchScale = 0;
 let _touchPinchMx    = 0;
 let _touchPinchMy    = 0;
 let _lastTouchCount  = 0;
+let _touchDragNode   = null;   // 편집모드에서 드래그 중인 노드
+let _touchNodeStart  = {};     // 편집모드 노드 드래그 시작 좌표
 
 function _td(a, b) { return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY); }
 
 svgEl.addEventListener('touchstart', e => {
-  // 퀵메뉴나 모달 위에서 시작된 터치는 무시
-  if (e.target.closest('#quick-menu-wrap, .modal-overlay, .popup-overlay')) return;
+  // .node-action (+/-) 버튼은 makeActionBtn의 touchstart에서 처리됨 → 여기서 차단
+  if (e.target.closest('.node-action')) return;
   e.preventDefault();
   _lastTouchCount = e.touches.length;
+
   if (e.touches.length === 1) {
     const t = e.touches[0];
-    _touchPanStart  = {ox: t.clientX - transform.x, oy: t.clientY - transform.y};
-    _touchTapStart  = {x: t.clientX, y: t.clientY, time: Date.now(), moved: false};
+    _touchPanStart = {ox: t.clientX - transform.x, oy: t.clientY - transform.y};
+    _touchTapStart = {x: t.clientX, y: t.clientY, time: Date.now(), moved: false};
     _touchPinchDist = 0;
+    _touchDragNode = null;
+
+    // 편집모드: 노드 위에서 시작하면 드래그 준비
+    if (editMode) {
+      const rc   = svgEl.getBoundingClientRect();
+      const svgX = (t.clientX - rc.left  - transform.x) / transform.scale;
+      const svgY = (t.clientY - rc.top   - transform.y) / transform.scale;
+      const key  = findNodeAtPoint(svgX, svgY);
+      if (key) {
+        _touchDragNode = key;
+        if (!selectedKeys.has(key)) { selectedKeys.clear(); selectedKeys.add(key); }
+        nodeStartPositions = {};
+        selectedKeys.forEach(k => {
+          nodeStartPositions[k] = {
+            x: positions[k].x, y: positions[k].y,
+            ox: positions[k].x - svgX, oy: positions[k].y - svgY
+          };
+        });
+        updateSelectionUI(); render();
+      }
+    }
   } else if (e.touches.length === 2) {
+    _touchDragNode = null;
     _touchPanStart = null;
     const rc = svgEl.getBoundingClientRect();
     _touchPinchDist  = _td(e.touches[0], e.touches[1]);
@@ -1393,43 +1431,63 @@ svgEl.addEventListener('touchstart', e => {
 }, {passive: false});
 
 svgEl.addEventListener('touchmove', e => {
-  if (e.target.closest('#quick-menu-wrap, .modal-overlay, .popup-overlay')) return;
+  if (e.target.closest('.node-action')) return;
   e.preventDefault();
+
   if (e.touches.length === 2 && _touchPinchDist > 0) {
-    // 핀치 줌 + 두 손가락 이동 패닝
+    // 핀치 줌 + 미드포인트 패닝
     const rc  = svgEl.getBoundingClientRect();
     const nd  = _td(e.touches[0], e.touches[1]);
     const ns  = Math.min(Math.max(_touchPinchScale * (nd / _touchPinchDist), 0.1), 3);
     const nmx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rc.left;
     const nmy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rc.top;
-    // 줌 기준점 유지
     transform.x -= ((_touchPinchMx - transform.x) / transform.scale) * (ns - transform.scale);
     transform.y -= ((_touchPinchMy - transform.y) / transform.scale) * (ns - transform.scale);
     transform.scale = ns;
-    // 미드포인트 이동만큼 패닝
     transform.x += nmx - _touchPinchMx;
     transform.y += nmy - _touchPinchMy;
-    _touchPinchMx = nmx;
-    _touchPinchMy = nmy;
+    _touchPinchMx = nmx; _touchPinchMy = nmy;
     updateView();
-  } else if (e.touches.length === 1 && _touchPanStart && _lastTouchCount <= 1) {
-    // 1손가락 패닝
+
+  } else if (e.touches.length === 1 && _lastTouchCount <= 1) {
     const t = e.touches[0];
-    if (_touchTapStart) {
-      if (Math.abs(t.clientX - _touchTapStart.x) > 8 ||
-          Math.abs(t.clientY - _touchTapStart.y) > 8) _touchTapStart.moved = true;
+    const dx = Math.abs(t.clientX - (_touchTapStart ? _touchTapStart.x : t.clientX));
+    const dy = Math.abs(t.clientY - (_touchTapStart ? _touchTapStart.y : t.clientY));
+    if (dx > 6 || dy > 6) {
+      if (_touchTapStart) _touchTapStart.moved = true;
     }
-    transform.x = t.clientX - _touchPanStart.ox;
-    transform.y = t.clientY - _touchPanStart.oy;
-    updateView();
+
+    if (editMode && _touchDragNode && _touchTapStart && _touchTapStart.moved) {
+      // 편집모드: 노드 드래그
+      const rc  = svgEl.getBoundingClientRect();
+      const cx  = (t.clientX - rc.left - transform.x) / transform.scale;
+      const cy  = (t.clientY - rc.top  - transform.y) / transform.scale;
+      selectedKeys.forEach(k => {
+        const s = nodeStartPositions[k]; if (!s) return;
+        positions[k].x = Math.round((cx + s.ox) / SNAP) * SNAP;
+        positions[k].y = Math.round((cy + s.oy) / SNAP) * SNAP;
+      });
+      render();
+    } else if (_touchPanStart) {
+      // 패닝 (편집모드에서 노드 드래그 아닐 때 + 일반 모드)
+      transform.x = t.clientX - _touchPanStart.ox;
+      transform.y = t.clientY - _touchPanStart.oy;
+      updateView();
+    }
   }
 }, {passive: false});
 
 svgEl.addEventListener('touchend', e => {
-  if (e.target.closest('#quick-menu-wrap, .modal-overlay, .popup-overlay')) return;
+  if (e.target.closest('.node-action')) return;
   e.preventDefault();
+
   if (e.touches.length === 0) {
-    // 모든 손가락 뗌 → 탭 판정
+    // 드래그한 노드 저장
+    if (_touchDragNode && _touchTapStart && _touchTapStart.moved) {
+      saveToStorage();
+    }
+
+    // 탭 판정 (이동 없음 + 350ms 이내)
     if (_lastTouchCount === 1 && _touchTapStart && !_touchTapStart.moved &&
         (Date.now() - _touchTapStart.time) < 350) {
       const rc   = svgEl.getBoundingClientRect();
@@ -1441,11 +1499,15 @@ svgEl.addEventListener('touchend', e => {
         else showPopup(key);
       }
     }
-    _touchPanStart = null; _touchTapStart = null;
+
+    _touchPanStart = null; _touchTapStart  = null;
     _touchPinchDist = 0;   _lastTouchCount = 0;
+    _touchDragNode  = null; _touchNodeStart = {};
+
   } else if (e.touches.length === 1) {
-    // 핀치 종료 후 손가락 하나 남음 → 패닝 재시작 (탭은 막음)
+    // 핀치 종료 후 손가락 하나 남음 → 패닝 재시작
     _lastTouchCount = 1;
+    _touchDragNode  = null;
     const t = e.touches[0];
     _touchPanStart  = {ox: t.clientX - transform.x, oy: t.clientY - transform.y};
     _touchTapStart  = null;
@@ -1483,8 +1545,8 @@ function updateSelectionUI() {
 }
 
 function reCenter() {
-  const vw = (window.visualViewport ? window.visualViewport.width  : window.innerWidth);
-  const vh = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+  const vw = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   transform={x:vw/2-1000*0.6, y:vh/2-1000*0.6, scale:0.6};
   updateView();
 }
@@ -1943,9 +2005,9 @@ async function loadFromGithub() {
   if(!githubToken){showStatus('먼저 GitHub 토큰을 설정해주세요',true);openGithubModal();return;}
   try {
     showStatus('📥 GitHub에서 로드 중...');
-    const ts = Date.now();
-    const res=await fetch(`https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json?t=${ts}`,
-      {headers:{'Authorization':`token ${githubToken}`,'Cache-Control':'no-cache','Pragma':'no-cache'}});
+    // Cache-Control 헤더는 GitHub API CORS preflight에서 차단됨 → 타임스탬프 쿼리로만 캐시 무력화
+    const res=await fetch(`https://api.github.com/repos/apor76-cmyk/data/contents/mastery_data.json?t=${Date.now()}`,
+      {headers:{'Authorization':`token ${githubToken}`}});
     if(res.ok){
       const d=await res.json();
       const parsed=JSON.parse(_fromB64(d.content));
@@ -2303,31 +2365,28 @@ function applyJsonImport(merge) {
 }
 
 /* ============================================================
-   모바일 뷰포트 크기 변화 대응 (주소창 숨김/키보드 등)
+   모바일 뷰포트 크기 변화 대응 (주소창/키보드 등)
    ============================================================ */
-function onViewportResize() {
-  const vw = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
-  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-  const wrapper = document.getElementById('canvas-wrapper');
-  if (wrapper) {
-    wrapper.style.width  = vw + 'px';
-    wrapper.style.height = vh + 'px';
+(function(){
+  function syncViewport() {
+    const vw = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    const cvs = document.getElementById('canvas-wrapper');
+    if (!cvs) return;
+    cvs.style.width  = vw + 'px';
+    cvs.style.height = vh + 'px';
+    if (window.visualViewport) {
+      cvs.style.top  = (window.visualViewport.offsetTop  || 0) + 'px';
+      cvs.style.left = (window.visualViewport.offsetLeft || 0) + 'px';
+    }
   }
   if (window.visualViewport) {
-    const offsetTop  = window.visualViewport.offsetTop  || 0;
-    const offsetLeft = window.visualViewport.offsetLeft || 0;
-    wrapper.style.top  = offsetTop  + 'px';
-    wrapper.style.left = offsetLeft + 'px';
-    wrapper.style.position = 'fixed';
+    window.visualViewport.addEventListener('resize', syncViewport);
+    window.visualViewport.addEventListener('scroll', syncViewport);
+  } else {
+    window.addEventListener('resize', syncViewport);
   }
-}
-
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', onViewportResize);
-  window.visualViewport.addEventListener('scroll', onViewportResize);
-} else {
-  window.addEventListener('resize', onViewportResize);
-}
+})();
 
 /* ============================================================
    초기 실행
