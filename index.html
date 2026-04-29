@@ -79,8 +79,6 @@ svg{width:100%;height:100%;display:block;touch-action:none;}
 .edit-mode .node-action{opacity:1;pointer-events:auto;}
 .node-action:hover circle{filter:brightness(1.2) drop-shadow(0 2px 6px rgba(0,0,0,0.4));}
 .action-btn-symbol{transition:transform 0.15s ease;pointer-events:none;}
-.edit-mode .node-g{cursor:grab;}
-.edit-mode .node-g:active{cursor:grabbing;}
 .edit-hint{font-size:9px;fill:var(--accent);opacity:0;text-anchor:middle;pointer-events:none;font-weight:700;}
 .edit-mode .node-g:hover .edit-hint{opacity:0.8;}
 
@@ -197,7 +195,7 @@ svg{width:100%;height:100%;display:block;touch-action:none;}
   <div id="quick-menu-list">
     <div class="qm-custom-select" id="qm-cat-wrapper">
       <button class="qm-cat-btn" id="qm-cat-btn" onclick="toggleCatDropdown(event)">
-        <span class="qm-icon">📁</span>
+        <span class="qm-icon">📁@</span>
         <span class="qm-cat-label" id="qm-cat-label">카테고리 선택</span>
         <span class="qm-cat-chevron">▾</span>
       </button>
@@ -1413,7 +1411,12 @@ svgEl.addEventListener('touchstart', e => {
       const key  = findNodeAtPoint(svgX, svgY);
       if (key) {
         _touchDragNode = key;
-        if (!selectedKeys.has(key)) { selectedKeys.clear(); selectedKeys.add(key); }
+        _touchPanStart = null; // 노드 드래그 중일 때 패닝 방지
+        // 단순히 현재 노드만 선택 (기존 선택 유지)
+        if (!selectedKeys.has(key)) { 
+          selectedKeys.clear(); 
+        }
+        selectedKeys.add(key);
         nodeStartPositions = {};
         selectedKeys.forEach(k => {
           nodeStartPositions[k] = {
@@ -1421,14 +1424,15 @@ svgEl.addEventListener('touchstart', e => {
             ox: positions[k].x - svgX, oy: positions[k].y - svgY
           };
         });
-        // 노드 위에 있을 때는 패닝 시작 안 함 — 드래그인지 탭인지 이동 후 판정
-        _touchPanStart = null;
         updateSelectionUI(); render();
-        return; // 노드 드래그 준비 완료, 패닝 설정 건너뜀
+      } else {
+        // 노드 위가 아니면 패닝 시작
+        _touchPanStart = {ox: t.clientX - transform.x, oy: t.clientY - transform.y};
       }
+    } else {
+      // 일반 모드: 패닝 시작
+      _touchPanStart = {ox: t.clientX - transform.x, oy: t.clientY - transform.y};
     }
-    // 노드 위가 아니거나 일반 모드: 패닝 준비
-    _touchPanStart = {ox: t.clientX - transform.x, oy: t.clientY - transform.y};
   } else if (e.touches.length === 2) {
     _touchDragNode = null;
     _touchPanStart = null;
@@ -1463,26 +1467,31 @@ svgEl.addEventListener('touchmove', e => {
     const t = e.touches[0];
     const dx = Math.abs(t.clientX - (_touchTapStart ? _touchTapStart.x : t.clientX));
     const dy = Math.abs(t.clientY - (_touchTapStart ? _touchTapStart.y : t.clientY));
-    if (dx > 4 || dy > 4) {
-      if (_touchTapStart) _touchTapStart.moved = true;
-    }
-
-    if (editMode && _touchDragNode && _touchTapStart && _touchTapStart.moved) {
-      // 편집모드: 노드 드래그 — 패닝 완전 억제
-      const rc  = svgEl.getBoundingClientRect();
-      const cx  = (t.clientX - rc.left - transform.x) / transform.scale;
-      const cy  = (t.clientY - rc.top  - transform.y) / transform.scale;
-      selectedKeys.forEach(k => {
-        const s = nodeStartPositions[k]; if (!s) return;
-        positions[k].x = Math.round((cx + s.ox) / SNAP) * SNAP;
-        positions[k].y = Math.round((cy + s.oy) / SNAP) * SNAP;
-      });
-      render();
-    } else if (!_touchDragNode && _touchPanStart) {
-      // 패닝: 노드 드래그 중이 아닐 때만
-      transform.x = t.clientX - _touchPanStart.ox;
-      transform.y = t.clientY - _touchPanStart.oy;
-      updateView();
+    
+    if (editMode && _touchDragNode) {
+      // 편집모드: 노드 드래그 - 3px 이상 움직이면 활성화
+      if (dx > 3 || dy > 3) {
+        if (_touchTapStart) _touchTapStart.moved = true;
+        const rc  = svgEl.getBoundingClientRect();
+        const cx  = (t.clientX - rc.left - transform.x) / transform.scale;
+        const cy  = (t.clientY - rc.top  - transform.y) / transform.scale;
+        
+        // 선택된 모든 노드 이동
+        selectedKeys.forEach(k => {
+          const s = nodeStartPositions[k]; if (!s) return;
+          positions[k].x = Math.round((cx + s.ox) / SNAP) * SNAP;
+          positions[k].y = Math.round((cy + s.oy) / SNAP) * SNAP;
+        });
+        render();
+      }
+    } else if (_touchPanStart) {
+      // 패닝 (편집모드에서 노드 드래그 아닐 때 + 일반 모드)
+      if (dx > 6 || dy > 6) {
+        if (_touchTapStart) _touchTapStart.moved = true;
+        transform.x = t.clientX - _touchPanStart.ox;
+        transform.y = t.clientY - _touchPanStart.oy;
+        updateView();
+      }
     }
   }
 }, {passive: false});
@@ -1492,15 +1501,14 @@ svgEl.addEventListener('touchend', e => {
   e.preventDefault();
 
   if (e.touches.length === 0) {
-    // 드래그한 노드 저장
+    // 드래그한 노드 저장 - moved 플래그 기반
     if (_touchDragNode && _touchTapStart && _touchTapStart.moved) {
       saveToStorage();
-      render();
     }
 
-    // 탭 판정 (이동 없음 + 400ms 이내)
+    // 탭 판정 (이동 없음 + 500ms 이내) - 드래그가 아닐 때만
     if (_lastTouchCount === 1 && _touchTapStart && !_touchTapStart.moved &&
-        (Date.now() - _touchTapStart.time) < 400) {
+        (Date.now() - _touchTapStart.time) < 500) {
       const rc   = svgEl.getBoundingClientRect();
       const svgX = (_touchTapStart.x - rc.left  - transform.x) / transform.scale;
       const svgY = (_touchTapStart.y - rc.top   - transform.y) / transform.scale;
